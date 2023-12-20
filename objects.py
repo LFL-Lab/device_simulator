@@ -21,10 +21,20 @@ class SimulationConfig:
         self.min_converged_passes = min_converged_passes
         self.Lj = Lj
         self.Cj = Cj
+        
+def simulate_single_design(device_dict):
+    emode_df = {}
+    lom_df = {}
+    if "cpw_opts" in device_dict["design"]["design_options"].keys():
+        emode_df = run_eigenmode(device_dict)
+    else:
+        lom_df = run_xmon_LOM(device_dict["design"]["design_options"]) if "cross_length" in device_dict["design"]["design_options"] else run_capn_LOM(device_dict["design"]["design_options"])
+    # return get_sim_results(lom_df=lom_df, emode_df=emode_df)
+    return emode_df if emode_df != {} else lom_df
 
-def get_sim_results(emode_df, lom_df):
-    data_emode = emode_df["sim_results"]
-    data_lom = lom_df["data"]
+def get_sim_results(emode_df = {}, lom_df = {}):
+    data_emode = {} if emode_df == {} else emode_df["sim_results"]
+    data_lom = {} if lom_df == {} else lom_df["data"]
 
     data = {}
 
@@ -32,7 +42,7 @@ def get_sim_results(emode_df, lom_df):
     cross2ground = abs(lom_df["data"]["cross_to_ground"]) * 1e-15
     f_r = emode_df["sim_results"]["cavity_frequency"]
     Lj = lom_df["design_options"]["aedt_q3d_inductance"] * (1 if lom_df["design_options"]["aedt_q3d_inductance"] > 1e-9 else 1e-9)
-    print(Lj)
+    # print(Lj)
     gg, aa, ff_q = find_g_a(cross2cpw, cross2ground, f_r, Lj, N=4)
     data = dict(
         f_cavity = f_r,
@@ -46,14 +56,15 @@ def get_sim_results(emode_df, lom_df):
     return data
 
 
-def run_eigenmode(filename):
+def run_eigenmode(device_dict):
+    # return device_dict["design"]["design_options"]
     design = metal.designs.design_planar.DesignPlanar()
     gui = metal.MetalGUI(design)
     design.overwrite_enabled = True
 
-    sim_json = open(filename)
-    sim_data = json.load(sim_json)
-    geometry_dict = sim_data["design_options"]["geometry_dict"]
+    # sim_json = open(filename)
+    # sim_data = json.load(sim_json)
+    geometry_dict = device_dict["design"]["design_options"]
 
     cpw_length = int("".join(filter(str.isdigit, geometry_dict["cpw_opts"]["total_length"])))
     claw = create_claw(geometry_dict["claw_opts"], cpw_length, design)
@@ -95,11 +106,59 @@ def run_eigenmode(filename):
 
     return data_df
 
-def run_LOM(filename):
+def run_capn_LOM(param):
     design = metal.designs.design_planar.DesignPlanar()
     gui = metal.MetalGUI(design)
     design.overwrite_enabled = True
-    
+
+    coupler = create_coupler(param, design)
+
+    loma = LOManalysis(design, "q3d")
+    loma.sim.setup.reuse_selected_design = False
+    loma.sim.setup.reuse_setup = False
+
+    # example: update single setting
+    loma.sim.setup.max_passes = 30
+    loma.sim.setup.min_converged_passes = 3
+    loma.sim.setup.percent_error = 0.1
+    loma.sim.setup.auto_increase_solution_order = 'False'
+    loma.sim.setup.solution_order = 'Medium'
+
+    loma.sim.setup.name = 'lom_setup'
+
+    loma.sim.run(name = 'LOMv2.01', components=[coupler.name],
+    open_terminations=[(coupler.name, pin_name) for pin_name in coupler.pin_names])
+    cap_df = loma.sim.capacitance_matrix
+    data = loma.get_data()
+    setup = loma.sim.setup
+
+    data_df = {
+        "design_options": {
+            "coupling_type": "NCap",
+            "geometry_dict": param
+        },
+        "sim_options": {
+            "sim_type": "lom",
+            "setup": setup,
+        },
+        "sim_results": {
+            "C_top2top" : abs(cap_df[f"cap_body_0_{coupler.name}"].values[0]),
+            "C_top2bottom" : abs(cap_df[f"cap_body_0_{coupler.name}"].values[1]),
+            "C_top2ground" : abs(cap_df[f"cap_body_0_{coupler.name}"].values[2]),
+            "C_bottom2bottom" : abs(cap_df[f"cap_body_1_{coupler.name}"].values[1]),
+            "C_bottom2ground" : abs(cap_df[f"cap_body_1_{coupler.name}"].values[2]),
+            "C_ground2ground" : abs(cap_df[f"ground_main_plane"].values[2]),
+        },
+        "misc": data
+    }
+
+    return data_df
+
+def run_xmon_LOM(cross_dict):
+    design = metal.designs.design_planar.DesignPlanar()
+    gui = metal.MetalGUI(design)
+    design.overwrite_enabled = True
+
     c1 = LOManalysis(design, "q3d")
 
     c1.sim.setup.reuse_selected_design = False
@@ -111,9 +170,9 @@ def run_LOM(filename):
     c1.sim.setup.percent_error = 0.1
     c1.sim.setup.name = 'sweep_setup'
 
-    sim_json = open(filename)
-    sim_data = json.load(sim_json)
-    cross_dict = sim_data["design_options"]["geometry_dict"]["claw_opts"]
+    # sim_json = open(filename)
+    # sim_data = json.load(sim_json)
+    # cross_dict = device_dict["design"]["design_options"]
 
     # return cross_dict["connection_pads"].keys()
 
