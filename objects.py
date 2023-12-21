@@ -83,14 +83,14 @@ def simulate_single_design(design, gui, device_dict, sim_options):
 
 def get_sim_results(emode_df = {}, lom_df = {}):
     data_emode = {} if emode_df == {} else emode_df["sim_results"]
-    data_lom = {} if lom_df == {} else lom_df["data"]
+    data_lom = {} if lom_df == {} else lom_df["sim_results"]
 
     data = {}
 
-    cross2cpw = abs(lom_df["data"]["cross_to_claw"]) * 1e-15
-    cross2ground = abs(lom_df["data"]["cross_to_ground"]) * 1e-15
+    cross2cpw = abs(lom_df["sim_results"]["cross_to_claw"]) * 1e-15
+    cross2ground = abs(lom_df["sim_results"]["cross_to_ground"]) * 1e-15
     f_r = emode_df["sim_results"]["cavity_frequency"]
-    Lj = lom_df["design_options"]["aedt_q3d_inductance"] * (1 if lom_df["design_options"]["aedt_q3d_inductance"] > 1e-9 else 1e-9)
+    Lj = lom_df["design"]["design_options"]["aedt_q3d_inductance"] * (1 if lom_df["design"]["design_options"]["aedt_q3d_inductance"] > 1e-9 else 1e-9)
     # print(Lj)
     gg, aa, ff_q = find_g_a(cross2cpw, cross2ground, f_r, Lj, N=4)
     data = dict(
