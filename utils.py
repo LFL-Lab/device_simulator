@@ -8,6 +8,7 @@ from qiskit_metal.toolbox_metal import math_and_overrides
 from qiskit_metal.qlibrary.core import QComponent
 import qiskit_metal as metal
 from just_claw import TransmonClaw
+from qubit_cavity import QubitCavity
 from qiskit_metal.qlibrary.terminations.launchpad_wb import LaunchpadWirebond
 from qiskit_metal.qlibrary.terminations.short_to_ground import ShortToGround
 from qiskit_metal.qlibrary.tlines.straight_path import RouteStraight
@@ -173,10 +174,10 @@ def get_freq_Q_kappa(epra, test_hfss):
 
     setMaterialProperties(project_name, design_name, solutiontype="Eigenmode")
     epra.sim._analyze()
-    epra.sim.plot_convergences()
+    # epra.sim.plot_convergences()
     epra.sim.save_screenshot()
-    epra.sim.plot_fields('main')
-    epra.sim.save_screenshot()
+    # epra.sim.plot_fields('main')
+    # epra.sim.save_screenshot()
     f = epra.get_frequencies()
 
     freq = f.values[0][0] * 1e9
@@ -230,6 +231,10 @@ def add_ground_strip_and_mesh(modeler, coupler, mesh_lengths):
 
     for mesh_name, mesh_info in mesh_lengths.items():
         modeler.mesh_length(mesh_name, mesh_info['objects'], MaxLength=mesh_info['MaxLength'])
+
+def create_qubitcavity(opts, design):
+    qubitcavity = QubitCavity(design, "qubitcavity", options=opts)
+    return qubitcavity
 
 def create_claw(opts, cpw_length, design):
     opts["orientation"] = "-90"

@@ -11,7 +11,7 @@ from qiskit_metal.analyses.quantization import LOManalysis
 
 class SimulationConfig:
     def __init__(self, design_name="CavitySweep", renderer_type="hfss", sim_type="eigenmode",
-                 setup_name="Setup", max_passes=50, max_delta_f=0.05, min_converged_passes=2, Lj=0, Cj=0):
+                 setup_name="Setup", max_passes=49, max_delta_f=0.05, min_converged_passes=2, Lj=0, Cj=0):
         self.design_name = design_name
         self.renderer_type = renderer_type
         self.sim_type = sim_type
@@ -21,15 +21,64 @@ class SimulationConfig:
         self.min_converged_passes = min_converged_passes
         self.Lj = Lj
         self.Cj = Cj
-        
-def simulate_single_design(device_dict):
+
+def simulate_whole_device(design, cross_dict, cavity_dict, LOM_options, eigenmode_options):
+    design.delete_all_components()
+    # print(cavity_dict)
+    emode_df = run_eigenmode(design, cavity_dict, eigenmode_options)
+    lom_df = run_xmon_LOM(design, cross_dict, LOM_options)
+    data = get_sim_results(emode_df = emode_df, lom_df = lom_df)
+
+    device_dict = Dict(
+        cavity_options = Dict(
+            coupling_type = "CLT",
+            coupler_options = cavity_dict["cplr_opts"],
+            cpw_options = Dict (
+                left_options = cavity_dict["cpw_opts"],
+            )
+            
+        ),
+        qubit_options = cross_dict
+    )
+
+    design = metal.designs.design_planar.DesignPlanar()
+    gui = metal.MetalGUI(design)
+    design.overwrite_enabled = True
+    QC = create_qubitcavity(device_dict, design)
+
+    gui.rebuild()
+    gui.autoscale()
+    gui.screenshot()
+
+    return_df = dict(
+        sim_options = dict(
+            setup = dict(
+                eigenmode_setup = eigenmode_options,
+                LOM_setup = LOM_options
+            ),
+            simulator = "Ansys HFSS"
+        ),
+        sim_results = data,
+        design = dict(
+            design_options = device_dict
+        )
+    )
+
+    return return_df
+
+def simulate_single_design(design, gui, device_dict, sim_options):
+    design.delete_all_components()
     emode_df = {}
     lom_df = {}
-    if "cpw_opts" in device_dict["design"]["design_options"].keys():
-        emode_df = run_eigenmode(device_dict)
+    if "cpw_opts" in device_dict.keys():
+        emode_df = run_eigenmode(design, device_dict, sim_options)
     else:
-        lom_df = run_xmon_LOM(device_dict["design"]["design_options"]) if "cross_length" in device_dict["design"]["design_options"] else run_capn_LOM(device_dict["design"]["design_options"])
+        lom_df = run_xmon_LOM(design, device_dict, sim_options) if "cross_length" in device_dict else run_capn_LOM(design, device_dict, sim_options)
     # return get_sim_results(lom_df=lom_df, emode_df=emode_df)
+    gui.rebuild()
+    gui.autoscale()
+    gui.screenshot()
+
     return emode_df if emode_df != {} else lom_df
 
 def get_sim_results(emode_df = {}, lom_df = {}):
@@ -53,28 +102,50 @@ def get_sim_results(emode_df = {}, lom_df = {}):
         f_qubit = ff_q
     )
 
-    return data
+    return_df = dict(
+        sim_options = dict(
+            setup = dict(
+                eigenmode_setup = eigenmode_options,
+                LOM_setup = LOM_options
+            ),
+            simulator = "Ansys HFSS"
+        ),
+        sim_results = data,
+        design = dict(
+            design_options = device_dict
+        )
+    )
+
+    return return_df
 
 
-def run_eigenmode(device_dict):
+def run_eigenmode(design, geometry_dict, sim_options):
     # return device_dict["design"]["design_options"]
-    design = metal.designs.design_planar.DesignPlanar()
-    gui = metal.MetalGUI(design)
-    design.overwrite_enabled = True
+    # design = metal.designs.design_planar.DesignPlanar()
+    # gui = metal.MetalGUI(design)
+    # design.overwrite_enabled = True
 
     # sim_json = open(filename)
     # sim_data = json.load(sim_json)
-    geometry_dict = device_dict["design"]["design_options"]
+    # geometry_dict = device_dict["design"]["design_options"]
+    # print(sim_options["setup"])
 
     cpw_length = int("".join(filter(str.isdigit, geometry_dict["cpw_opts"]["total_length"])))
     claw = create_claw(geometry_dict["claw_opts"], cpw_length, design)
     coupler = create_coupler(geometry_dict["cplr_opts"], design)
     cpw = create_cpw(geometry_dict["cpw_opts"], coupler, design)
-    config = SimulationConfig(min_converged_passes=1)
+    config = SimulationConfig(min_converged_passes=3)
 
     epra, hfss = start_simulation(design, config)
-    setup = set_simulation_hyperparameters(epra, config)
+    hfss.clean_active_design()
+    # setup = set_simulation_hyperparameters(epra, config)
+    epra.sim.setup = Dict(sim_options["setup"])
+    epra.sim.setup.name = "test_setup"
     epra.sim.renderer.options.max_mesh_length_port = '7um'
+    setup = epra.sim.setup
+    # print(setup)
+    # print(type(setup))
+    # print(type(sim_options["setup"]))
 
     render_simulation_with_ports(epra, config.design_name, setup.vars, coupler)
     modeler = hfss.pinfo.design.modeler
@@ -88,13 +159,15 @@ def run_eigenmode(device_dict):
     data = epra.get_data()
 
     data_df = {
-        "design_options": {
-            "coupling_type": "CLT",
-            "geometry_dict": geometry_dict
+        "design": {
+            "coupler_type": "CLT",
+            "design_options": geometry_dict,
+            "design_tool": "Qiskit Metal"
         },
         "sim_options": {
             "sim_type": "epr",
             "setup": setup,
+            "simulator": "Ansys HFSS"
         },
         "sim_results": {
             "cavity_frequency": f_rough,
@@ -106,10 +179,10 @@ def run_eigenmode(device_dict):
 
     return data_df
 
-def run_capn_LOM(param):
-    design = metal.designs.design_planar.DesignPlanar()
-    gui = metal.MetalGUI(design)
-    design.overwrite_enabled = True
+def run_capn_LOM(design, param, sim_options):
+    # design = metal.designs.design_planar.DesignPlanar()
+    # gui = metal.MetalGUI(design)
+    # design.overwrite_enabled = True
 
     coupler = create_coupler(param, design)
 
@@ -118,13 +191,15 @@ def run_capn_LOM(param):
     loma.sim.setup.reuse_setup = False
 
     # example: update single setting
-    loma.sim.setup.max_passes = 30
+    loma.sim.setup.max_passes = 33
     loma.sim.setup.min_converged_passes = 3
     loma.sim.setup.percent_error = 0.1
     loma.sim.setup.auto_increase_solution_order = 'False'
     loma.sim.setup.solution_order = 'Medium'
 
     loma.sim.setup.name = 'lom_setup'
+
+    loma.sim.setup = sim_options["setup"]
 
     loma.sim.run(name = 'LOMv2.01', components=[coupler.name],
     open_terminations=[(coupler.name, pin_name) for pin_name in coupler.pin_names])
@@ -133,13 +208,15 @@ def run_capn_LOM(param):
     setup = loma.sim.setup
 
     data_df = {
-        "design_options": {
-            "coupling_type": "NCap",
-            "geometry_dict": param
+        "design": {
+            "coupler_type": "NCap",
+            "design_options": param,
+            "design_tool": "Qiskit Metal"
         },
         "sim_options": {
             "sim_type": "lom",
             "setup": setup,
+            "simulator": "Ansys HFSS"
         },
         "sim_results": {
             "C_top2top" : abs(cap_df[f"cap_body_0_{coupler.name}"].values[0]),
@@ -154,27 +231,22 @@ def run_capn_LOM(param):
 
     return data_df
 
-def run_xmon_LOM(cross_dict):
-    design = metal.designs.design_planar.DesignPlanar()
-    gui = metal.MetalGUI(design)
-    design.overwrite_enabled = True
+def run_xmon_LOM(design, cross_dict, sim_options):
+    # design = metal.designs.design_planar.DesignPlanar()
+    # gui = metal.MetalGUI(design)
+    # design.overwrite_enabled = True
 
     c1 = LOManalysis(design, "q3d")
 
     c1.sim.setup.reuse_selected_design = False
     c1.sim.setup.reuse_setup = False
 
-    # example: update single setting
-    c1.sim.setup.max_passes = 30
+    c1.sim.setup.max_passes = 50
     c1.sim.setup.min_converged_passes = 1
     c1.sim.setup.percent_error = 0.1
     c1.sim.setup.name = 'sweep_setup'
 
-    # sim_json = open(filename)
-    # sim_data = json.load(sim_json)
-    # cross_dict = device_dict["design"]["design_options"]
-
-    # return cross_dict["connection_pads"].keys()
+    c1.sim.setup = sim_options["setup"]
 
     qname = 'xmon'
     cnames = cross_dict["connection_pads"].keys()
@@ -182,30 +254,29 @@ def run_xmon_LOM(cross_dict):
 
     temp_arr = np.repeat(qname, len(cnames))
     ports_zip = zip(temp_arr, cnames)
-
-    # xmon1_options["cross_length"] = f"{cross_length}um"
-    # xmon1_options["connection_pads"]["readout"]["claw_length"] = f"{claw_length}um"
-    # xmon1_options["connection_pads"]["readout"]["ground_spacing"] = f"{ground_spacing}um"
-    # xmon1_options["aedt_hfss_inductance"]=Lj,
-    # xmon1_options["hfss_inductance"]=Lj, 
-    # xmon1_options["q3d_inductance"]=Lj,
-    # xmon1_options["aedt_q3d_inductance"]=Lj
     q = TransmonCross(design, qname, options=cross_dict)
     design.rebuild()
     selection = [qname]
-    open_pins = ports_zip #[(qname, cname)]
+    open_pins = ports_zip
     print(q.options)
     c1.sim.renderer.clean_active_design()
     c1.sim.run(name = 'LOMv2.0', components=selection,
                open_terminations=open_pins)
     cap_df = c1.sim.capacitance_matrix
 
-    # print(f'For Qubit_{i}, the cap matrix is...')
-    print(cap_df)
+    # print(cap_df)
 
     data = {
-        "design_options": design.components[qname].options,
-        "data": {
+        "design": {
+            "design_options": design.components[qname].options,
+            "design_tool": "Qiskit Metal"
+        },
+        "sim_options": {
+            "sim_type": "lom",
+            "setup": c1.sim.setup,
+            "simulator": "Ansys HFSS"
+        },
+        "sim_results": {
             "cross_to_ground": 0 if 'ground_main_plane' not in cap_df.loc[f'cross_{qname}'] else cap_df.loc[f'cross_{qname}']['ground_main_plane'],
             "claw_to_ground": 0 if 'ground_main_plane' not in cap_df.loc[f'{cname}_connector_arm_{qname}'] else cap_df.loc[f'{cname}_connector_arm_{qname}']['ground_main_plane'],
             "cross_to_claw": cap_df.loc[f'cross_{qname}'][f'{cname}_connector_arm_{qname}'],
@@ -213,18 +284,12 @@ def run_xmon_LOM(cross_dict):
             "claw_to_claw": cap_df.loc[f'{cname}_connector_arm_{qname}'][f'{cname}_connector_arm_{qname}'],
             "ground_to_ground": 0 if 'ground_main_plane' not in cap_df.loc[f'cross_{qname}'] else cap_df.loc['ground_main_plane']['ground_main_plane']
         },
-        "sim_info": {
-            "setup": c1.sim.setup,
-            "renderer_options": c1.sim.renderer.options
-        }
     }
     # save_simulation_data_to_json(data, filename = f"qubitonly_num{i}_{comp_id}_v{version}")
     return data
 
 def CLT_epr_sweep(design, sweep_opts, filename):    
     for param in extract_QSweep_parameters(sweep_opts):
-        # if int("".join(filter(str.isdigit, param["cpw_opts"]["total_length"]))) < 2000:
-        # param["claw_opts"].update({"pos_x": ("-1000um" if int("".join(filter(str.isdigit, param["cpw_opts"]["total_length"]))) < 2000 else "-1500um") })
         cpw_length = int("".join(filter(str.isdigit, param["cpw_opts"]["total_length"])))
         claw = create_claw(param["claw_opts"], cpw_length, design)
         coupler = create_coupler(param["cplr_opts"], design)
