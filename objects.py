@@ -102,21 +102,21 @@ def get_sim_results(emode_df = {}, lom_df = {}):
         f_qubit = ff_q
     )
 
-    return_df = dict(
-        sim_options = dict(
-            setup = dict(
-                eigenmode_setup = eigenmode_options,
-                LOM_setup = LOM_options
-            ),
-            simulator = "Ansys HFSS"
-        ),
-        sim_results = data,
-        design = dict(
-            design_options = device_dict
-        )
-    )
+    # return_df = dict(
+    #     sim_options = dict(
+    #         setup = dict(
+    #             eigenmode_setup = emode_df["sim_options"]["setup"],
+    #             LOM_setup = lom_df["sim_options"]["setup"]
+    #         ),
+    #         simulator = "Ansys HFSS"
+    #     ),
+    #     sim_results = data,
+    #     design = dict(
+    #         design_options = device_dict
+    #     )
+    # )
 
-    return return_df
+    return data
 
 
 def run_eigenmode(design, geometry_dict, sim_options):
